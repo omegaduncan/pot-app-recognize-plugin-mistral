@@ -1,4 +1,4 @@
-# Pot-App Mistral Text Recognition Plugin
+# Pot-App Mistral OCR Plugin
 
 [中文](README.md) | English
 
