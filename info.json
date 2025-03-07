@@ -1,37 +1,80 @@
 {
-  "id": "plugin.com.pot-app.ocrspace",
+  "id": "plugin.com.pot-app.mistral_recognize",
   "plugin_type": "recognize",
-  "icon": "icon.png",
-  "display": "OCR Space",
-  "homepage": "https://github.com/pot-app/pot-app-recognize-plugin-template",
+  "icon": "mistral.svg",
+  "display": "Mistral",
+  "homepage": "https://github.com/pot-app/pot-app-recognize-plugin-mistral",
   "needs": [
     {
-      "key": "engine",
-      "display": "Engine",
-      "type": "select",
-      "options": { "1": "Engine 1", "2": "Engine 2", "3": "Engine 3" }
+      "key": "apiKey",
+      "display": "API Key",
+      "type": "input"
     },
-    { "key": "apikey", "display": "Api Key", "type": "input" }
+    {
+      "key": "llmModel",
+      "display": "LLM 模型",
+      "type": "input",
+      "default": "gpt-4o"
+    },
+    {
+      "key": "requestPath",
+      "display": "LLM API 路徑",
+      "type": "input",
+      "default": "https://api.openai.com"
+    },
+    {
+      "key": "llmApiKey",
+      "display": "LLM API Key",
+      "type": "input"
+    },
+    {
+      "key": "customPrompt",
+      "display": "自定義 Prompt",
+      "type": "input",
+      "default": "請分析下列 OCR 取得的文字，找出重點並整理格式："
+    },
+    {
+      "key": "enableLLM",
+      "display": "啟用文字後處理",
+      "type": "select",
+      "options": {
+        "false": "停用",
+        "true": "啟用"
+      },
+      "default": "false"
+    }
   ],
   "language": {
-    "auto": "eng",
-    "zh_cn": "chs",
-    "zh_tw": "cht",
-    "en": "eng",
-    "ja": "jpn",
-    "ko": "kor",
-    "fr": "fre",
-    "es": "spa",
-    "ru": "rus",
-    "de": "ger",
-    "it": "ita",
-    "tr": "tur",
-    "pt_pt": "por",
-    "pt_br": "por",
-    "vi": "vie",
-    "th": "tai",
-    "ar": "ara",
-    "hi": "hin",
-    "fa": "per"
+    "auto": "Auto",
+    "zh_cn": "Simplified Chinese",
+    "zh_tw": "Traditional Chinese",
+    "yue": "Cantonese",
+    "ja": "Japanese",
+    "en": "English",
+    "ko": "Korean",
+    "fr": "French",
+    "es": "Spanish",
+    "ru": "Russian",
+    "de": "German",
+    "it": "Italian",
+    "tr": "Turkish",
+    "pt_pt": "Portuguese",
+    "pt_br": "Brazilian Portuguese",
+    "vi": "Vietnamese",
+    "id": "Indonesian",
+    "th": "Thai",
+    "ms": "Malay",
+    "ar": "Arabic",
+    "hi": "Hindi",
+    "mn_mo": "Mongolian",
+    "mn_cy": "Mongolian(Cyrillic)",
+    "km": "Khmer",
+    "nb_no": "Norwegian Bokmål",
+    "nn_no": "Norwegian Nynorsk",
+    "fa": "Persian",
+    "sv": "Swedish",
+    "pl": "Polish",
+    "nl": "Dutch",
+    "uk": "Ukrainian"
   }
 }

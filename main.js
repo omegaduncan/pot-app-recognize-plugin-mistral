@@ -1,49 +1,309 @@
 async function recognize(base64, lang, options) {
-    const { config, utils } = options;
+    const { config: pluginConfig, utils } = options;
     const { tauriFetch } = utils;
-    let { apikey, engine } = config;
-    base64 = `data:image/png;base64,${base64}`;
 
-    if (apikey === undefined || apikey.length === 0) {
-        throw "apikey not found";
+    // 檢查並設定 enableLLM 的預設值
+    console.debug("原始 enableLLM:", pluginConfig.enableLLM);
+    if (typeof pluginConfig.enableLLM === "undefined" || pluginConfig.enableLLM === null || pluginConfig.enableLLM === "") {
+        pluginConfig.enableLLM = "false"; // 預設關閉文字後處理功能
     }
-    if (engine === undefined || engine.length === 0) {
-        engine = "1";
+    console.debug("修改後 enableLLM:", pluginConfig.enableLLM);
+
+    const { apiKey, llmModel, requestPath, customPrompt, llmApiKey } = pluginConfig;
+    
+    // 檢查 API Key 是否存在
+    if (!apiKey || apiKey.length === 0) {
+        throw "API Key not found";
     }
 
-    let res = await tauriFetch('https://api.ocr.space/parse/image', {
-        method: "POST",
-        header: {
-            apikey,
-            "content-type": "application/x-www-form-urlencoded"
-        },
-        body: {
-            type: "Form",
-            payload: {
-                base64Image: base64,
-                OCREngine: engine,
-                language: lang
-            }
-        }
-    })
+    // 設置請求頭
+    const headers = {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+    };
 
-    if (res.ok) {
-        const { result } = res.data;
-        const { ErrorMessage, ParsedResults } = result;
-        if (ErrorMessage) {
-            throw ErrorMessage;
+    // 設置 OCR 請求體
+    const ocrBody = {
+        "model": "mistral-ocr-latest",
+        "document": {
+            "type": "image_url",
+            "image_url": `data:image/png;base64,${base64}`
         }
-        if (ParsedResults) {
-            let target = "";
-            for (let i in ParsedResults) {
-                const { ParsedText } = i;
-                target += ParsedText;
+    };
+
+    try {
+        // 發送 OCR 請求
+        let res = await tauriFetch("https://api.mistral.ai/v1/ocr", {
+            method: "POST",
+            url: "https://api.mistral.ai/v1/ocr",
+            headers: headers,
+            body: {
+                type: "Json",
+                payload: ocrBody
+            },
+            responseType: 1
+        });
+
+        // 處理 OCR 響應
+        if (res.ok) {
+            let result = res.data;
+            
+            // 檢查返回格式並提供詳細錯誤信息
+            if (!result) {
+                throw "Empty response from Mistral API";
             }
-            return target;
+            
+            if (!result.pages || !Array.isArray(result.pages) || result.pages.length === 0) {
+                throw `No pages in response: ${JSON.stringify(result)}`;
+            }
+            
+            // 從所有頁面提取文本內容並合併
+            let textContent = "";
+            for (let i = 0; i < result.pages.length; i++) {
+                const page = result.pages[i];
+                if (page.markdown) {
+                    // 如果已有內容，添加分頁符
+                    if (textContent.length > 0) {
+                        textContent += "\n\n";
+                    }
+                    // 添加頁面 markdown 內容
+                    textContent += page.markdown;
+                }
+            }
+            
+            if (textContent.length === 0) {
+                throw "No text content found in OCR results";
+            }
+            
+            // 如果啟用了 LLM 處理，將 OCR 結果發送給 LLM 進行處理
+            if (pluginConfig.enableLLM === "true") {
+                try {
+                    console.log(`[DEBUG] 啟用後處理，使用模型: ${llmModel || "gpt-4o"}`);
+                    const llmResult = await processWithLLM(textContent, lang, {
+                        apiKey: llmApiKey || apiKey,
+                        model: llmModel || "gpt-4o",
+                        requestPath: requestPath || "https://api.openai.com/v1/chat/completions",
+                        customPrompt: customPrompt || "Just recognize the text in the image. Do not offer unnecessary explanations.",
+                        tauriFetch
+                    });
+                    
+                    if (llmResult && !llmResult.error) {
+                        console.debug("LLM 處理後的結果:", llmResult);
+                        return llmResult;
+                    } else {
+                        console.error("LLM 處理失敗:", llmResult?.error || "未知錯誤");
+                        return textContent;
+                    }
+                } catch (err) {
+                    console.error("LLM 處理異常:", err);
+                    return textContent;
+                }
+            } else {
+                console.log(`[DEBUG] 後處理未啟用，直接返回OCR結果`);
+            }
+            
+            // 如果未啟用 LLM 處理，直接返回 OCR 結果
+            return textContent;
         } else {
-            throw JSON.stringify(result);
+            throw `Request failed with status ${res.status}: ${JSON.stringify(res.data)}`;
+        }
+    } catch (error) {
+        // 處理其他可能的錯誤
+        if (typeof error === 'string') {
+            throw error;
+        } else {
+            throw `Error occurred: ${error.message || JSON.stringify(error)}`;
+        }
+    }
+}
+
+// 使用 LLM 處理 OCR 文本
+async function processWithLLM(text, lang, options) {
+    // 解構參數，移除 provider
+    const { apiKey, model, requestPath, customPrompt, tauriFetch } = options;
+    
+    // 檢查是否有 API Key
+    if (!apiKey) {
+        console.error("未提供 LLM API Key");
+        return { error: "未提供 LLM API Key" };
+    }
+    
+    // 自動識別 LLM 提供者類型
+    const isGeminiModel = model?.toLowerCase().includes("gemini");
+    const isMistralModel = model?.toLowerCase().includes("mistral");
+    
+    // 處理請求路徑，自動補全完整地址
+    let actualRequestPath = requestPath;
+    
+    // 自動補全 API 路徑
+    if (isGeminiModel) {
+        // Gemini 模型處理
+        let geminiModel = model;
+        // 使用正確的 Google API endpoint
+        actualRequestPath = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
+    } else if (isMistralModel || (requestPath && requestPath.includes("mistral"))) {
+        // Mistral AI
+        if (actualRequestPath) {
+            // 檢查是否有 HTTP 協議前綴
+            if (!/^https?:\/\//i.test(actualRequestPath)) {
+                actualRequestPath = `https://${actualRequestPath}`;
+            }
+            
+            // 移除尾部斜線
+            actualRequestPath = actualRequestPath.replace(/\/+$/, "");
+            
+            // 檢查是否需要補全路徑
+            if (!actualRequestPath.includes("/v1/chat/completions")) {
+                if (actualRequestPath.includes("/v1")) {
+                    actualRequestPath = `${actualRequestPath}/chat/completions`;
+                } else {
+                    actualRequestPath = `${actualRequestPath}/v1/chat/completions`;
+                }
+            }
+        } else {
+            // 預設 Mistral API 地址
+            actualRequestPath = "https://api.mistral.ai/v1/chat/completions";
         }
     } else {
-        throw JSON.stringify(res);
+        // 預設 OpenAI 或相容 OpenAI API 的第三方服務
+        if (actualRequestPath) {
+            // 檢查是否有 HTTP 協議前綴
+            if (!/^https?:\/\//i.test(actualRequestPath)) {
+                actualRequestPath = `https://${actualRequestPath}`;
+            }
+            
+            // 移除尾部斜線
+            actualRequestPath = actualRequestPath.replace(/\/+$/, "");
+            
+            // 檢查是否需要補全路徑
+            if (!actualRequestPath.includes("/v1/chat/completions")) {
+                if (actualRequestPath.includes("/v1")) {
+                    actualRequestPath = `${actualRequestPath}/chat/completions`;
+                } else {
+                    actualRequestPath = `${actualRequestPath}/v1/chat/completions`;
+                }
+            }
+        } else {
+            // 預設 OpenAI API 地址
+            actualRequestPath = "https://api.openai.com/v1/chat/completions";
+        }
+    }
+
+    console.log(`[DEBUG] 使用模型: ${model}, API 路徑: ${actualRequestPath}`);
+    
+    // 根據語言調整 prompt
+    let finalPrompt = customPrompt;
+    if (finalPrompt.includes("$lang")) {
+        finalPrompt = finalPrompt.replaceAll("$lang", lang);
+    }
+    
+    // 設置請求頭
+    const headers = {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+    };
+    
+    // 依據 API 地址設置請求體
+    let body = {};
+    const isGoogleAPI = actualRequestPath?.includes('generativelanguage.googleapis.com');
+    
+    if (isGeminiModel || isGoogleAPI) {
+        // Google Gemini API 格式
+        let geminiModel = model;
+        if (!geminiModel || geminiModel === "gpt-4o") {
+            geminiModel = "gemini-1.5-flash";
+        }
+        
+        body = {
+            contents: [{
+                role: "user",
+                parts: [
+                    {
+                        text: `${finalPrompt}\n\n${text}`
+                    }
+                ]
+            }]
+        };
+        
+        // Google API 使用 URL 參數的 API key
+        actualRequestPath = actualRequestPath.includes('?') 
+            ? `${actualRequestPath}&key=${apiKey}` 
+            : `${actualRequestPath}?key=${apiKey}`;
+        
+        // 調整頭部，不需要 Authorization
+        headers.Authorization = undefined;
+    } else {
+        // OpenAI 或 Mistral API 格式 (兩者格式相同)
+        body = {
+            "model": model || "gpt-4o",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": `${finalPrompt}\n\n${text}`
+                }
+            ],
+            "temperature": 0.3
+        };
+    }
+    
+    console.log(`[DEBUG] 請求體結構: ${JSON.stringify({...body, messages: body.messages ? "[...]" : undefined, contents: body.contents ? "[...]" : undefined})}`);
+    
+    try {
+        // 發送 LLM 處理請求
+        let res = await tauriFetch(actualRequestPath, {
+            method: "POST",
+            url: actualRequestPath,
+            headers: headers,
+            body: {
+                type: "Json",
+                payload: body
+            },
+            responseType: 1
+        });
+        
+        if (res.ok) {
+            console.log(`[DEBUG] LLM 請求成功，狀態碼: ${res.status}`);
+            let result = res.data;
+            
+            // 根據提供者處理返回格式
+            if (isGeminiModel || isGoogleAPI) {
+                // 處理 Google API 的返回格式
+                if (!result || !result.candidates || !result.candidates[0]) {
+                    throw `Invalid API Response: ${JSON.stringify(result)}`;
+                }
+                
+                const content = result.candidates[0]?.content?.parts?.[0]?.text;
+                if (!content) {
+                    throw `No text in response: ${JSON.stringify(result.candidates[0])}`;
+                }
+                
+                return content;
+            } else {
+                // 處理 OpenAI/Mistral 的返回格式
+                if (!result || !result.choices || !result.choices[0]) {
+                    throw `Invalid API Response: ${JSON.stringify(result)}`;
+                }
+                
+                const choice = result.choices[0];
+                let content = '';
+                
+                if (choice.message && choice.message.content) {
+                    content = choice.message.content;
+                } else if (choice.content) {
+                    content = choice.content;
+                } else {
+                    content = JSON.stringify(choice);
+                }
+                
+                return content;
+            }
+        } else {
+            console.error(`[DEBUG] LLM 請求失敗，狀態碼: ${res.status}，回應內容: ${JSON.stringify(res.data)}`);
+            throw `LLM request failed with status ${res.status}: ${JSON.stringify(res.data)}`;
+        }
+    } catch (error) {
+        console.error("[DEBUG] LLM處理錯誤:", error);
+        // 如果 LLM 處理失敗，返回原始 OCR 文本並附加錯誤信息
+        return `[LLM處理失敗，顯示原始OCR結果] 錯誤: ${typeof error === 'string' ? error : error.message || JSON.stringify(error)}\n\n${text}`;
     }
 }

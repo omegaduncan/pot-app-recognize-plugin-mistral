@@ -1,71 +1,84 @@
-# Pot-App 文字识别插件模板仓库 (以 [OCR Space](https://ocr.space/) 为例)
+# Pot-App Mistral 文字識別插件
 
-### 此仓库为模板仓库，编写插件时可以直接由此仓库创建插件仓库
+[中文](README.md) | [English](README_EN.md)
 
-## 插件编写指南
+這是一個 [pot-app](https://github.com/pot-app/pot-app) 的 Mistral AI OCR 識別外掛，支援多種 LLM 進行後處理。
 
-### 1. 插件仓库创建
+## 支援功能
 
-- 以此仓库为模板创建一个新的仓库
-- 仓库名为 `pot-app-recognize-plugin-<插件名>`，例如 `pot-app-recognize-plugin-ocrspace`
+- [x] 文字辨識 (OCR，使用 Mistral AI)
+- [x] 文字後處理 (支援 OpenAI、Google Gemini 或 Mistral AI)
 
-### 2. 插件信息配置
+## 功能展示
 
-编辑 `info.json` 文件，修改以下字段：
+### OCR 文字識別
 
-- `id`：插件唯一 id，必须以`[plugin]`开头，例如 `[plugin].com.pot-app.ocrspace`
-- `display`: 插件显示名称，例如 `OCR Space`
-- `homepage`: 插件主页，填写你的仓库地址即可，例如 `https://github.com/pot-app/pot-app-recognize-plugin-template`
-- `icon`: 插件图标，填写当前目录下的图标名称，例如 `icon.png`
-- `needs`: 插件依赖，一个数组，每个依赖为一个对象，包含以下字段：
-  - `key`: 依赖 key，对应该项依赖在配置文件中的名称，例如 `apikey`
-  - `display`: 依赖显示名称，对应用户显示的名称，例如 `API Key`
-  - `type`: 组件类型 `input` | `select`
-  - `options`: 选项列表(仅 select 组件需要)，例如 `{"engine_a":"Engina A","engine_b":"Engina B"}`
-- `language`: 插件支持的语言映射，将 pot 的语言代码和插件发送请求时的语言代码一一对应
+使用的 Prompt：`Just recognize the text in the image. Do not offer unnecessary explanations.`
 
-### 3. 插件编写/编译
+![OCR 文字識別功能展示](./screenshots/demo-ocr.png)
 
-编辑 `main.js` 实现 `recognize` 函数
+### LLM 文字後處理
 
-#### Input parameters
+使用的 Prompt：`保留原文，並另外翻譯一份中文跟英文`
 
-```javascript
-// config: config map
-// detect: detected source language
-// setResult: function to set result text
-// utils: some tools
-//     http: tauri http module
-//     readBinaryFile: function
-//     readTextFile: function
-//     Database: tauri Database class
-//     CryptoJS: CryptoJS module
-//     cacheDir: cache dir path
-//     pluginDir: current plugin dir 
-//     osType: "Windows_NT" | "Darwin" | "Linux"
-async function recognize(base64, lang, options) {
-  const { config, utils } = options;
-  const { http, readBinaryFile, readTextFile, Database, CryptoJS, run, cacheDir, pluginDir, osType } = utils;
-  const { fetch, Body } = http;
-}
-```
+![LLM 文字後處理功能展示](./screenshots/demo-llm.png)
 
-#### Return value
+## 使用方法
 
-```javascript
-return "result";
-```
+### 配置
 
-### 4. 打包 pot 插件
+#### 基本 OCR 設定
 
-1. 将`main.js`文件和`info.json`以及图标文件压缩为 zip 文件。
+使用前請先在插件配置處填入 Mistral AI 的 API Key
 
-2. 将文件重命名为`<插件id>.potext`，例如`plugin.com.pot-app.ocrspace.potext`,即可得到 pot 需要的插件。
+1. 登入 [Mistral AI 官網](https://mistral.ai/)
+2. 前往 [API Keys](https://console.mistral.ai/api-keys/) 頁面
+3. 創建新的 API Key
+4. 將創建好的 API Key 填入外掛配置中的「API Key」欄位
 
-## 自动编译打包
+#### 文字後處理設定 (LLM)
 
-本仓库配置了 Github Actions，可以实现推送后自动编译打包插件。
+此外掛支援使用 LLM 對 OCR 結果進行後處理，可以分析、整理文字內容，支援多種 LLM 服務提供者。
 
-每次将仓库推送到 GitHub 之后 actions 会自动运行，将打包好的插件上传到 artifact，在 actions 页面可以下载
+1. 啟用文字後處理：選擇「啟用」
+2. LLM 模型：填入要使用的模型
+   - OpenAI: `gpt-4o`、`gpt-4-mini` 等
+   - Gemini: `gemini-2.0-flash`、`gemini-1.5-pro` 等
+   - Mistral: `mistral-large-latest`、`mistral-medium` 等
 
-每次提交 Tag 之后，actions 会自动运行，将打包好的插件上传到 release，在 release 页面可以下载打包好的插件
+3. LLM API Key：填入對應 LLM 服務的 API Key
+   - 若留空，將預設使用與 OCR 相同的 API Key (僅 Mistral 可以共用)
+
+4. LLM API 路徑：設定 API 請求路徑
+   - OpenAI: 可簡化輸入為 `https://api.openai.com`（系統會自動補齊完整路徑）
+   - Gemini: 留空即可，系統會根據選擇的模型自動生成
+   - Mistral: 可簡化輸入為 `https://api.mistral.ai`（系統會自動補齊完整路徑）
+   - 第三方 OpenAI 兼容服務: 輸入 API 基礎地址即可（如 `https://xxx.com`）
+
+5. 自定義 Prompt：可自定義指示 LLM 如何處理 OCR 文本的提示詞
+   - 可使用 `$lang` 變數來代表當前識別的語言
+   - 例如：`請用$lang分析並整理以下文字，找出重點：`
+
+## 使用案例
+
+1. **純 OCR 文字辨識**：
+   - 關閉「啟用文字後處理」選項
+   - 直接獲取圖片中的原始文字
+
+2. **使用 OpenAI 進行智能文字分析**：
+   - 選擇 LLM 提供者為 OpenAI
+   - 填入您的 OpenAI API Key
+   - 設定合適的 Prompt，例如「請分析這段文字並提取關鍵信息」
+   - GPT 模型會對 OCR 辨識出的文字進行分析處理
+
+3. **使用 Google Gemini 進行文本格式化**：
+   - 選擇 LLM 提供者為 Google Gemini
+   - 填入您的 Google API Key
+   - 使用 Prompt 如「請將這段文字整理成條列式清單」
+   - 獲得 Gemini 模型格式化後的文本內容
+
+4. **使用 Mistral AI 進行文本翻譯**：
+   - 選擇 LLM 提供者為 Mistral AI
+   - 使用與 OCR 相同的 API Key 或填入專用的 Key
+   - 使用 Prompt 如「請將此文本翻譯成$lang」
+   - 獲得 Mistral 模型翻譯後的內容
