@@ -134,13 +134,24 @@ async function processWithLLM(text, lang, options) {
     
     // 處理請求路徑，自動補全完整地址
     let actualRequestPath = requestPath;
-    
+
+    // 檢查是否為 Google API
+    const isGoogleAPI = actualRequestPath?.includes('generativelanguage.googleapis.com');
+    const isOpenAIAPI = actualRequestPath?.includes('api.openai.com');
+    const isMistralAPI = actualRequestPath?.includes('api.mistral.ai');
+
     // 自動補全 API 路徑
     if (isGeminiModel) {
         // Gemini 模型處理
         let geminiModel = model;
-        // 使用正確的 Google API endpoint
-        actualRequestPath = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
+        
+        // 如果用戶未提供路徑，或提供的是 OpenAI/Mistral 路徑但模型是 Gemini，使用 Google API
+        if (!actualRequestPath || isOpenAIAPI || isMistralAPI) {
+            actualRequestPath = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
+            console.log(`[DEBUG] 檢測到 Gemini 模型，自動切換到 Google API 端點`);
+        } else {
+            console.log(`[DEBUG] 使用用戶提供的自訂端點: ${actualRequestPath}`);
+        }
     } else if (isMistralModel || (requestPath && requestPath.includes("mistral"))) {
         // Mistral AI
         if (actualRequestPath) {
@@ -165,7 +176,7 @@ async function processWithLLM(text, lang, options) {
             actualRequestPath = "https://api.mistral.ai/v1/chat/completions";
         }
     } else {
-        // 預設 OpenAI 或相容 OpenAI API 的第三方服務
+        // 其他 API (OpenAI 或相容 OpenAI API 的第三方服務)
         if (actualRequestPath) {
             // 檢查是否有 HTTP 協議前綴
             if (!/^https?:\/\//i.test(actualRequestPath)) {
@@ -202,11 +213,22 @@ async function processWithLLM(text, lang, options) {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`
     };
+
+    // 特殊處理 Google API 的授權
+    if (isGeminiModel && (actualRequestPath.includes('googleapis.com'))) {
+        // Google API 使用 URL 參數的 API key
+        actualRequestPath = actualRequestPath.includes('?') 
+            ? `${actualRequestPath}&key=${apiKey}` 
+            : `${actualRequestPath}?key=${apiKey}`;
+        
+        // 移除 Authorization 頭，Google API 不使用它
+        headers.Authorization = undefined;
+        console.log(`[DEBUG] 使用 Google API 授權方式`);
+    }
     
     // 依據 API 地址設置請求體
     let body = {};
-    const isGoogleAPI = actualRequestPath?.includes('generativelanguage.googleapis.com');
-    
+
     if (isGeminiModel || isGoogleAPI) {
         // Google Gemini API 格式
         let geminiModel = model;
@@ -214,24 +236,31 @@ async function processWithLLM(text, lang, options) {
             geminiModel = "gemini-1.5-flash";
         }
         
-        body = {
-            contents: [{
-                role: "user",
-                parts: [
+        if (actualRequestPath.includes('googleapis.com')) {
+            // 原生 Google Gemini API 格式
+            body = {
+                contents: [{
+                    role: "user",
+                    parts: [
+                        {
+                            text: `${finalPrompt}\n\n${text}`
+                        }
+                    ]
+                }]
+            };
+        } else {
+            // 第三方 API，使用 OpenAI 格式但保留 gemini 模型名稱
+            body = {
+                "model": geminiModel,
+                "messages": [
                     {
-                        text: `${finalPrompt}\n\n${text}`
+                        "role": "user",
+                        "content": `${finalPrompt}\n\n${text}`
                     }
-                ]
-            }]
-        };
-        
-        // Google API 使用 URL 參數的 API key
-        actualRequestPath = actualRequestPath.includes('?') 
-            ? `${actualRequestPath}&key=${apiKey}` 
-            : `${actualRequestPath}?key=${apiKey}`;
-        
-        // 調整頭部，不需要 Authorization
-        headers.Authorization = undefined;
+                ],
+                "temperature": 0.3
+            };
+        }
     } else {
         // OpenAI 或 Mistral API 格式 (兩者格式相同)
         body = {
@@ -248,8 +277,11 @@ async function processWithLLM(text, lang, options) {
     
     console.log(`[DEBUG] 請求體結構: ${JSON.stringify({...body, messages: body.messages ? "[...]" : undefined, contents: body.contents ? "[...]" : undefined})}`);
     
+    // 發送請求並處理響應
     try {
-        // 發送 LLM 處理請求
+        console.log(`[DEBUG] 發送 ${isGeminiModel ? 'Gemini' : (isMistralModel ? 'Mistral' : 'OpenAI')} 請求到: ${actualRequestPath}`);
+        console.log(`[DEBUG] 請求體: ${JSON.stringify(body)}`);
+        
         let res = await tauriFetch(actualRequestPath, {
             method: "POST",
             url: actualRequestPath,
@@ -261,45 +293,50 @@ async function processWithLLM(text, lang, options) {
             responseType: 1
         });
         
-        if (res.ok) {
-            console.log(`[DEBUG] LLM 請求成功，狀態碼: ${res.status}`);
-            let result = res.data;
-            
-            // 根據提供者處理返回格式
-            if (isGeminiModel || isGoogleAPI) {
-                // 處理 Google API 的返回格式
-                if (!result || !result.candidates || !result.candidates[0]) {
-                    throw `Invalid API Response: ${JSON.stringify(result)}`;
-                }
-                
-                const content = result.candidates[0]?.content?.parts?.[0]?.text;
-                if (!content) {
-                    throw `No text in response: ${JSON.stringify(result.candidates[0])}`;
-                }
-                
-                return content;
-            } else {
-                // 處理 OpenAI/Mistral 的返回格式
-                if (!result || !result.choices || !result.choices[0]) {
-                    throw `Invalid API Response: ${JSON.stringify(result)}`;
-                }
-                
-                const choice = result.choices[0];
-                let content = '';
-                
-                if (choice.message && choice.message.content) {
-                    content = choice.message.content;
-                } else if (choice.content) {
-                    content = choice.content;
-                } else {
-                    content = JSON.stringify(choice);
-                }
-                
-                return content;
+        console.log(`[DEBUG] 響應狀態: ${res.status}, 響應數據: ${JSON.stringify(res.data)}`);
+        
+        // 檢查響應
+        if (!res.ok) {
+            throw `API request failed: ${res.status} - ${JSON.stringify(res.data)}`;
+        }
+        
+        let result = res.data;
+        if (!result) {
+            throw "Empty response from API";
+        }
+        
+        // 根據請求路徑和響應格式處理不同 API 的響應
+        if (actualRequestPath.includes('googleapis.com')) {
+            // 處理 Google API 的返回格式
+            if (!result.candidates || !result.candidates[0]) {
+                throw `Invalid Gemini API Response: ${JSON.stringify(result)}`;
             }
+            
+            return result.candidates[0].content.parts[0].text;
         } else {
-            console.error(`[DEBUG] LLM 請求失敗，狀態碼: ${res.status}，回應內容: ${JSON.stringify(res.data)}`);
-            throw `LLM request failed with status ${res.status}: ${JSON.stringify(res.data)}`;
+            // 處理 OpenAI/Mistral API 格式的響應 (也包括第三方 API)
+            if (result.choices && result.choices[0] && result.choices[0].message) {
+                // OpenAI 格式
+                return result.choices[0].message.content;
+            } else if (result.candidates && result.candidates[0]) {
+                // 某些第三方可能用 Gemini 風格返回
+                return result.candidates[0].content.parts[0].text;
+            } else if (result.content) {
+                // 簡化的返回格式
+                return result.content;
+            } else {
+                // 未識別格式，嘗試提取可能的內容
+                console.warn(`[WARN] 未識別的 API 響應格式: ${JSON.stringify(result)}`);
+                
+                // 嘗試各種可能的路徑
+                if (result.message && result.message.content) {
+                    return result.message.content;
+                } else if (result.text || result.data) {
+                    return result.text || result.data;
+                } else {
+                    throw `無法從響應中提取文本: ${JSON.stringify(result)}`;
+                }
+            }
         }
     } catch (error) {
         console.error("[DEBUG] LLM處理錯誤:", error);
