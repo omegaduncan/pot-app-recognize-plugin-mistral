@@ -1,9 +1,9 @@
 {
-  "id": "plugin.com.pot-app.mistral_recognize",
+  "id": "plugin.com.omegaduncan.mistral_recognize",
   "plugin_type": "recognize",
   "icon": "mistral.svg",
   "display": "Mistral",
-  "homepage": "https://github.com/pot-app/pot-app-recognize-plugin-mistral",
+  "homepage": "https://github.com/omegaduncan/pot-app-recognize-plugin-mistral",
   "needs": [
     {
       "key": "apiKey",
